@@ -98,6 +98,10 @@ export class LocalDataService implements DataService {
 
     const now = new Date();
     const previous = existingIndex >= 0 ? items[existingIndex] : undefined;
+    const previousCreatedAt = previous ? new Date(previous.createdAt).getTime() : NaN;
+    if (previous && auth.role !== 'staff' && (!Number.isFinite(previousCreatedAt) || Date.now() - previousCreatedAt > 24 * 60 * 60 * 1000)) {
+      throw new DataServiceError('Han pasado más de 24 horas. Solo el cuerpo técnico puede modificar este registro.', 'EDIT_WINDOW_EXPIRED');
+    }
     const measurement: Measurement = {
       id: previous?.id || crypto.randomUUID(),
       date,
