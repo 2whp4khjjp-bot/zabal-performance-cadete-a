@@ -293,6 +293,9 @@ function saveMeasurement_(input, session) {
     const previous = rowIndex > 0 ? values[rowIndex - 1] : [];
     const previousId = rowIndex > 0 ? String(previous[0]) : '';
     const previousCreated = rowIndex > 0 ? previous[3] : now;
+    if (rowIndex > 0 && session.role !== 'staff' && isOlderThan24Hours_(previousCreated, now)) {
+      throw apiError_('Han pasado más de 24 horas. Solo el cuerpo técnico puede modificar este registro.', 'EDIT_WINDOW_EXPIRED');
+    }
     const id = previousId || Utilities.getUuid();
     const comments = String(input.comments || '').replace(/[<>]/g, '').trim().slice(0, 500);
     const mergedWeight = hasWeight ? weight : numberOrNull_(previous[6]);
@@ -306,6 +309,12 @@ function saveMeasurement_(input, session) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function isOlderThan24Hours_(createdAt, now) {
+  const createdTime = createdAt instanceof Date ? createdAt.getTime() : new Date(createdAt).getTime();
+  if (!isFinite(createdTime)) return true;
+  return now.getTime() - createdTime > 24 * 60 * 60 * 1000;
 }
 
 function generatePlayerPins_() {
