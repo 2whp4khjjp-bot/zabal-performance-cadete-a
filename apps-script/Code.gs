@@ -10,6 +10,7 @@ const SHEETS = {
   CODES: 'Códigos jugadores',
   MATCHES: 'Partidos',
   MATCH_MINUTES: 'Minutos partidos',
+  ATTENDANCE: 'Asistencia',
 };
 
 const HEADERS = {
@@ -20,6 +21,7 @@ const HEADERS = {
   'Códigos jugadores': ['jugador_id', 'jugador_nombre', 'pin'],
   Partidos: ['id', 'fecha', 'tipo', 'rival', 'duracion_minutos', 'creado_en', 'actualizado_en', 'creado_por'],
   'Minutos partidos': ['partido_id', 'jugador_id', 'jugador_nombre', 'minutos'],
+  Asistencia: ['id', 'fecha', 'jugador_id', 'jugador_nombre', 'estado', 'comentarios', 'creado_en', 'actualizado_en', 'creado_por'],
 };
 
 function onOpen() {
@@ -78,6 +80,8 @@ function doPost(event) {
     if (action === 'getMeasurements') return json_({ ok: true, data: getMeasurements_(session) });
     if (action === 'getCurrentSession') return json_({ ok: true, data: getCurrentSession_() });
     if (action === 'saveMeasurement') return json_({ ok: true, data: saveMeasurement_(input.measurement, session) });
+    if (action === 'getAttendance') return json_({ ok: true, data: getAttendance_(session) });
+    if (action === 'saveAttendance') return json_({ ok: true, data: saveAttendance_(input.attendance, session) });
     if (action === 'getMatches') return json_({ ok: true, data: getMatches_(session) });
     if (action === 'saveMatch') return json_({ ok: true, data: saveMatch_(input.match, session) });
     throw apiError_('Acción no permitida.', 'INVALID_ACTION');
@@ -174,6 +178,64 @@ function getBootstrap_(session) {
     measurements: getMeasurements_(session),
     session: getCurrentSession_(),
   };
+}
+
+function ensureAttendanceSheet_() {
+  const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  if (!id) throw apiError_('La hoja de cálculo no está configurada.', 'CONFIG');
+  const spreadsheet = SpreadsheetApp.openById(id);
+  ensureSheet_(spreadsheet, SHEETS.ATTENDANCE, HEADERS.Asistencia);
+  return spreadsheet.getSheetByName(SHEETS.ATTENDANCE);
+}
+
+function getAttendance_(session) {
+  requireStaff_(session);
+  ensureAttendanceSheet_();
+  return rows_(SHEETS.ATTENDANCE).map(function(row) {
+    const status = String(row.estado || 'pending');
+    return { id: String(row.id), date: dateKey_(row.fecha), playerId: String(row.jugador_id), playerName: String(row.jugador_nombre), status: status === 'present' ? 'present' : status === 'absent' ? 'absent' : 'pending', comments: String(row.comentarios || ''), createdAt: iso_(row.creado_en), updatedAt: iso_(row.actualizado_en), createdBy: String(row.creado_por || 'cuerpo-tecnico') };
+  }).sort(function(a, b) { return (b.date + b.updatedAt).localeCompare(a.date + a.updatedAt); });
+}
+
+function saveAttendance_(input, session) {
+  requireStaff_(session);
+  if (!input) throw apiError_('Faltan los datos de asistencia.', 'VALIDATION');
+  const date = String(input.date || '');
+  const entries = Array.isArray(input.entries) ? input.entries : [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > dateKey_(new Date())) throw apiError_('La fecha de asistencia no es válida.', 'VALIDATION');
+  if (!entries.length) throw apiError_('No hay jugadores para guardar.', 'VALIDATION');
+  const playersById = {};
+  getPlayers_({ role: 'staff' }).forEach(function(player) { playersById[player.id] = player; });
+  const clean = entries.map(function(entry) {
+    const player = playersById[String(entry.playerId || '')];
+    const status = String(entry.status || 'pending');
+    if (!player || player.name !== String(entry.playerName || '') || ['pending', 'present', 'absent'].indexOf(status) < 0) throw apiError_('Hay un registro de asistencia no válido.', 'VALIDATION');
+    return { playerId: player.id, playerName: player.name, status: status, comments: String(entry.comments || '').replace(/[<>]/g, '').trim().slice(0, 250) };
+  });
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw apiError_('Hay muchos guardados a la vez. Inténtalo de nuevo.', 'BUSY');
+  try {
+    const target = ensureAttendanceSheet_();
+    const values = target.getDataRange().getValues();
+    const headers = values[0].map(String);
+    const dateCol = headers.indexOf('fecha'); const playerCol = headers.indexOf('jugador_id'); const idCol = headers.indexOf('id'); const createdCol = headers.indexOf('creado_en');
+    const previous = {}; const rowsToDelete = [];
+    values.slice(1).forEach(function(row, index) { if (row[dateCol] && dateKey_(row[dateCol]) === date) { previous[String(row[playerCol])] = { id: String(row[idCol]), createdAt: row[createdCol] }; rowsToDelete.push(index + 2); } });
+    for (let index = rowsToDelete.length - 1; index >= 0; index -= 1) target.deleteRow(rowsToDelete[index]);
+    const now = new Date();
+    const newRows = clean.map(function(entry) { const old = previous[entry.playerId]; return [old ? old.id : Utilities.getUuid(), date, entry.playerId, entry.playerName, entry.status, entry.comments, old ? old.createdAt : now, now, 'cuerpo-tecnico']; });
+    target.getRange(target.getLastRow() + 1, 1, newRows.length, newRows[0].length).setValues(newRows);
+    return newRows.map(function(row) { return { id: String(row[0]), date: date, playerId: String(row[2]), playerName: String(row[3]), status: String(row[4]), comments: String(row[5]), createdAt: iso_(row[6]), updatedAt: iso_(row[7]), createdBy: String(row[8]) }; });
+  } finally { lock.releaseLock(); }
+}
+
+function markAttendancePresentFromMeasurement_(date, player) {
+  const target = ensureAttendanceSheet_();
+  const values = target.getDataRange().getValues(); const headers = values[0].map(String); const dateCol = headers.indexOf('fecha'); const playerCol = headers.indexOf('jugador_id'); let rowIndex = -1;
+  for (let index = 1; index < values.length; index += 1) if (dateKey_(values[index][dateCol]) === date && String(values[index][playerCol]) === player.id) { rowIndex = index + 1; break; }
+  const now = new Date(); const previous = rowIndex > 0 ? values[rowIndex - 1] : null;
+  const row = [previous ? previous[0] : Utilities.getUuid(), date, player.id, player.name, 'present', previous ? previous[5] : '', previous ? previous[6] : now, now, 'medicion'];
+  if (rowIndex > 0) target.getRange(rowIndex, 1, 1, row.length).setValues([row]); else target.appendRow(row);
 }
 
 function getMatches_(session) {
@@ -316,6 +378,7 @@ function saveMeasurement_(input, session) {
     const row = [id, requestedDate, Utilities.formatDate(now, Session.getScriptTimeZone(), 'HH:mm'), previousCreated, player.id, player.name, blankIfUndefined_(mergedWeight), blankIfUndefined_(mergedFatigue), blankIfUndefined_(mergedSoreness), comments, String(input.sessionId || ''), createdBy, now];
     if (rowIndex > 0) sheet.getRange(rowIndex, 1, 1, row.length).setValues([row]);
     else sheet.appendRow(row);
+    markAttendancePresentFromMeasurement_(requestedDate, player);
     return { id: id, date: requestedDate, time: row[2], createdAt: iso_(previousCreated), playerId: player.id, playerName: player.name, weight: mergedWeight, fatigue: mergedFatigue, soreness: mergedSoreness, comments: comments, sessionId: String(input.sessionId || ''), createdBy: createdBy, updatedAt: now.toISOString() };
   } finally {
     lock.releaseLock();

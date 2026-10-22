@@ -1,6 +1,6 @@
 import { appConfig, environment } from '../config';
 import { createDemoMeasurements, createTodaySession, demoPlayers } from '../data/demo';
-import type { AuthRole, AuthSession, BootstrapData, MatchInput, MatchRecord, Measurement, MeasurementInput, Player, TrainingSession } from '../types';
+import type { AttendanceInput, AttendanceRecord, AuthRole, AuthSession, BootstrapData, MatchInput, MatchRecord, Measurement, MeasurementInput, Player, TrainingSession } from '../types';
 import { todayKey } from '../utils/date';
 import { sanitizeComment } from '../utils/measurements';
 import type { DataService } from './DataService';
@@ -9,6 +9,7 @@ import { DataServiceError } from './DataService';
 const MEASUREMENTS_KEY = 'zabal-demo-measurements-v1';
 const PLAYERS_KEY = 'zabal-demo-players-v1';
 const MATCHES_KEY = 'zabal-demo-matches-v1';
+const ATTENDANCE_KEY = 'zabal-cadete-attendance-v1';
 
 const sha256 = async (value: string) => {
   const bytes = new TextEncoder().encode(value);
@@ -129,7 +130,39 @@ export class LocalDataService implements DataService {
     if (existingIndex >= 0) items[existingIndex] = measurement;
     else items.push(measurement);
     localStorage.setItem(MEASUREMENTS_KEY, JSON.stringify(items));
+    const attendance = readJson<AttendanceRecord[]>(ATTENDANCE_KEY, []);
+    const attendanceIndex = attendance.findIndex((item) => item.playerId === player.id && item.date === date);
+    const nowIso = now.toISOString();
+    const attendanceRecord: AttendanceRecord = { id: attendance[attendanceIndex]?.id || crypto.randomUUID(), date, playerId: player.id, playerName: player.name, status: 'present', comments: attendance[attendanceIndex]?.comments ?? '', createdAt: attendance[attendanceIndex]?.createdAt || nowIso, updatedAt: nowIso, createdBy: 'medicion' };
+    if (attendanceIndex >= 0) attendance[attendanceIndex] = attendanceRecord; else attendance.push(attendanceRecord);
+    localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(attendance));
     return measurement;
+  }
+
+  async getAttendance(token: string): Promise<AttendanceRecord[]> {
+    const auth = this.requireSession(token);
+    if (auth.role !== 'staff') throw new DataServiceError('Solo el cuerpo técnico puede consultar la asistencia.', 'FORBIDDEN');
+    return readJson<AttendanceRecord[]>(ATTENDANCE_KEY, []).sort((a, b) => `${b.date}${b.updatedAt}`.localeCompare(`${a.date}${a.updatedAt}`));
+  }
+
+  async saveAttendance(token: string, input: AttendanceInput): Promise<AttendanceRecord[]> {
+    const auth = this.requireSession(token);
+    if (auth.role !== 'staff') throw new DataServiceError('Solo el cuerpo técnico puede guardar la asistencia.', 'FORBIDDEN');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || input.date > todayKey()) throw new DataServiceError('La fecha no es válida.', 'VALIDATION');
+    const players = readJson(PLAYERS_KEY, demoPlayers);
+    const records = readJson<AttendanceRecord[]>(ATTENDANCE_KEY, []);
+    const now = new Date().toISOString();
+    const saved = input.entries.map((entry) => {
+      const player = players.find((item) => item.id === entry.playerId && item.active);
+      if (!player || player.name !== entry.playerName || !['pending', 'present', 'absent'].includes(entry.status)) throw new DataServiceError('Hay un registro de asistencia no válido.', 'VALIDATION');
+      const index = records.findIndex((item) => item.date === input.date && item.playerId === player.id);
+      const previous = index >= 0 ? records[index] : undefined;
+      const record: AttendanceRecord = { id: previous?.id || crypto.randomUUID(), date: input.date, playerId: player.id, playerName: player.name, status: entry.status, comments: sanitizeComment(entry.comments), createdAt: previous?.createdAt || now, updatedAt: now, createdBy: 'cuerpo-tecnico' };
+      if (index >= 0) records[index] = record; else records.push(record);
+      return record;
+    });
+    localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(records));
+    return saved;
   }
 
   async getMatches(token: string): Promise<MatchRecord[]> {
