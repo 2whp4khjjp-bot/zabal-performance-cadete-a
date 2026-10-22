@@ -1,3 +1,4 @@
+import { setTeamSettings } from './utils/teamSettings';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import type { AttendanceInput, AttendanceRecord, AuthRole, AuthSession, DashboardFilter, MatchInput, MatchRecord, Measurement, MeasurementInput, Player, TrainingSession } from './types';
 import { dataService } from './services';
@@ -19,6 +20,7 @@ type View = 'players' | 'matches' | 'attendance' | 'technical';
 
 export default function App() {
   const [auth, setAuth] = useState<AuthSession | null>(() => readAuthSession());
+  useEffect(() => { if (!auth) return; let cancelled = false; dataService.getTeamSettings(auth.token).then((settings) => { if (!cancelled) setTeamSettings(settings); }).catch(() => undefined); return () => { cancelled = true; }; }, [auth?.token]);
   const [remaining, setRemaining] = useState(() => auth ? remainingSeconds(auth.expiresAt) : 0);
   const [players, setPlayers] = useState<Player[]>([]);
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
@@ -165,6 +167,13 @@ export default function App() {
     }
   };
 
+  const updateMatch = async (matchId: string, input: MatchInput) => {
+    if (!auth || auth.role !== 'staff') return false;
+    setSaving(true); setError('');
+    try { const saved = await dataService.updateMatch(auth.token, matchId, input); setMatches((current) => current.map((match) => match.id === matchId ? saved : match)); setToast('Partido actualizado'); return true; }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo actualizar el partido.'); return false; }
+    finally { setSaving(false); }
+  };
   const saveAttendance = async (input: AttendanceInput) => {
     if (!auth || auth.role !== 'staff') return false;
     setSaving(true); setError('');
@@ -194,7 +203,7 @@ export default function App() {
       {!loading && auth.role === 'staff' && view === 'players' && !selectedPlayer && <PlayerGrid players={players} measurements={measurements} onSelect={setSelectedPlayer} filter={filter} onFilterChange={setFilter} query={query} onQueryChange={setQuery} />}
       {!loading && view === 'players' && selectedPlayer && trainingSession && <PlayerForm player={selectedPlayer} measurements={measurements} session={trainingSession} saving={saving} onSave={saveMeasurement} onBack={() => setSelectedPlayer(null)} role={auth.role} />}
       <Suspense fallback={<div className="loading-screen"><span className="loader" /><p>Cargando módulo…</p></div>}>
-        {!loading && auth.role === 'staff' && view === 'matches' && <MatchesPanel players={players} matches={matches} saving={saving} onSave={saveMatch} />}
+        {!loading && auth.role === 'staff' && view === 'matches' && <MatchesPanel players={players} matches={matches} saving={saving} onSave={saveMatch} onUpdate={updateMatch} />}
         {!loading && auth.role === 'staff' && view === 'attendance' && <AttendancePanel players={players} attendance={attendance} saving={saving} onSave={saveAttendance} />}
         {!loading && auth.role === 'staff' && view === 'technical' && <TechnicalPanel players={players} measurements={measurements} />}
       </Suspense>

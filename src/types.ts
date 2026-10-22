@@ -109,6 +109,12 @@ export type MatchMinutes = {
 };
 
 export type MatchRecord = {
+  referee?: string;
+  goalsFor?: number;
+  goalsAgainst?: number;
+  incidents?: string;
+  captainId?: string;
+
   id: string;
   date: string;
   type: MatchType;
@@ -121,6 +127,13 @@ export type MatchRecord = {
 };
 
 export type MatchInput = {
+  requestId?: string;
+  referee?: string;
+  goalsFor?: number;
+  goalsAgainst?: number;
+  incidents?: string;
+  captainId?: string;
+
   date: string;
   type: MatchType;
   opponent: string;

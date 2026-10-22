@@ -1,5 +1,6 @@
+import { emptyMatchDetails, detailsFromMatch, MatchDetailsFields, MatchPdfButton } from './MatchDetailsFields';
 import { useMemo, useState } from 'react';
-import { CalendarDays, Clock3, History, Save, Trophy, UsersRound } from 'lucide-react';
+import { CalendarDays, Pencil, Clock3, History, Save, Trophy, UsersRound } from 'lucide-react';
 import type { MatchInput, MatchRecord, MatchType, Player } from '../types';
 import { todayKey } from '../utils/date';
 
@@ -10,15 +11,19 @@ type Props = {
   matches: MatchRecord[];
   saving: boolean;
   onSave: (input: MatchInput) => Promise<boolean>;
+  onUpdate: (matchId: string, input: MatchInput) => Promise<boolean>;
 };
 
 const typeLabel = (type: MatchType) => type === 'official' ? 'Oficial' : 'Amistoso';
 
-export function MatchesPanel({ players, matches, saving, onSave }: Props) {
+export function MatchesPanel({ players, matches, saving, onSave, onUpdate }: Props) {
   const [mode, setMode] = useState<'new' | 'history'>('new');
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [date, setDate] = useState(todayKey());
   const [type, setType] = useState<MatchType>('official');
   const [opponent, setOpponent] = useState('');
+  const [details, setDetails] = useState(emptyMatchDetails);
+  const [saveRequestId, setSaveRequestId] = useState(() => crypto.randomUUID());
   const [durationOption, setDurationOption] = useState('90');
   const [customDuration, setCustomDuration] = useState('90');
   const [minutesByPlayer, setMinutesByPlayer] = useState<Record<string, string>>({});
@@ -61,6 +66,8 @@ export function MatchesPanel({ players, matches, saving, onSave }: Props) {
     event.preventDefault();
     if (!validate()) return;
     const input: MatchInput = {
+      ...details,
+      requestId: saveRequestId,
       date,
       type,
       opponent: opponent.trim(),
@@ -70,8 +77,9 @@ export function MatchesPanel({ players, matches, saving, onSave }: Props) {
         return raw === undefined || raw === '' ? [] : [{ playerId: player.id, playerName: player.name, minutes: Number(raw) }];
       }),
     };
-    if (await onSave(input)) {
-      setOpponent('');
+    if (await (editingId ? onUpdate(editingId, input) : onSave(input))) {
+      setEditingId(null);
+      setOpponent(''); setDetails(emptyMatchDetails); setSaveRequestId(crypto.randomUUID());
       setMinutesByPlayer({});
       setErrors([]);
       setMode('history');
@@ -90,7 +98,7 @@ export function MatchesPanel({ players, matches, saving, onSave }: Props) {
 
       {mode === 'new' ? <form className="match-form" onSubmit={(event) => void submit(event)} noValidate>
         <section className="panel-card match-details-card">
-          <div className="panel-card__heading"><div><p className="eyebrow eyebrow--dark">Datos del encuentro</p><h2>Nuevo partido</h2></div><CalendarDays /></div>
+          <div className="panel-card__heading"><div><p className="eyebrow eyebrow--dark">Datos del encuentro</p><h2>{editingId ? 'Editar partido' : 'Nuevo partido'}</h2></div><CalendarDays /></div>
           <div className="match-fields">
             <label>Fecha<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
             <label>Tipo<select value={type} onChange={(event) => setType(event.target.value as MatchType)}><option value="official">Oficial</option><option value="friendly">Amistoso</option></select></label>
@@ -98,6 +106,7 @@ export function MatchesPanel({ players, matches, saving, onSave }: Props) {
             <label className="match-field--wide">Duración total<select value={durationOption} onChange={(event) => setDurationOption(event.target.value)}>{durationOptions.map((value) => <option key={value} value={value}>{value} minutos</option>)}<option value="custom">Personalizado</option></select></label>
             {durationOption === 'custom' && <label className="match-field--wide">Minutos personalizados<input type="number" min="1" max="180" inputMode="numeric" value={customDuration} onChange={(event) => setCustomDuration(event.target.value)} /></label>}
           </div>
+          <MatchDetailsFields value={details} onChange={setDetails} players={players} />
         </section>
 
         <section className="panel-card match-minutes-card">
@@ -124,7 +133,7 @@ export function MatchesPanel({ players, matches, saving, onSave }: Props) {
           </article>
           <article className="panel-card recent-matches-card">
             <div className="panel-card__heading"><div><p className="eyebrow eyebrow--dark">Registro</p><h2>Últimos partidos</h2></div><History /></div>
-            {matches.length ? <div className="recent-match-list">{matches.map((match) => <article className="recent-match-row" key={match.id}><span className={`match-type-icon match-type-icon--${match.type}`}><Trophy size={18} /></span><div><strong>{match.opponent}</strong><small>{match.date} · {typeLabel(match.type)} · {match.durationMinutes} min</small></div><span><strong>{match.minutes.filter((item) => item.minutes > 0).length}</strong><small>jugadores</small></span></article>)}</div> : <div className="empty-state compact"><Trophy size={30} /><h2>Todavía no hay partidos</h2><button className="text-button" onClick={() => setMode('new')}>Registrar el primero</button></div>}
+            {matches.length ? <div className="recent-match-list">{matches.map((match) => <article className="recent-match-row" key={match.id}><span className={`match-type-icon match-type-icon--${match.type}`}><Trophy size={18} /></span><div><strong>{match.opponent}</strong><small>{match.date} · {typeLabel(match.type)} · {match.durationMinutes} min</small></div><span><strong>{match.minutes.filter((item) => item.minutes > 0).length}</strong><small>jugadores</small></span><span className="recent-match-actions"><MatchPdfButton match={match} players={players} /><button type="button" className="button button--secondary" onClick={() => { setEditingId(match.id); setDetails(detailsFromMatch(match)); setDate(match.date); setType(match.type); setOpponent(match.opponent); setDurationOption(durationOptions.includes(match.durationMinutes as typeof durationOptions[number]) ? String(match.durationMinutes) : 'custom'); setCustomDuration(String(match.durationMinutes)); setMinutesByPlayer(Object.fromEntries(match.minutes.map((entry) => [entry.playerId, String(entry.minutes)]))); setMode('new'); }}><Pencil size={16} /> Editar</button></span></article>)}</div> : <div className="empty-state compact"><Trophy size={30} /><h2>Todavía no hay partidos</h2><button className="text-button" onClick={() => setMode('new')}>Registrar el primero</button></div>}
           </article>
         </div>
       </section>}

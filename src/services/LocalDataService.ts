@@ -1,3 +1,4 @@
+import type { TeamSettings } from '../utils/teamSettings';
 import { appConfig, environment } from '../config';
 import { createDemoMeasurements, createTodaySession, demoPlayers } from '../data/demo';
 import type { AttendanceInput, AttendanceRecord, AuthRole, AuthSession, BootstrapData, MatchInput, MatchRecord, Measurement, MeasurementInput, Player, TrainingSession } from '../types';
@@ -29,6 +30,10 @@ const readJson = <T>(key: string, fallback: T): T => {
 };
 
 export class LocalDataService implements DataService {
+  async getTeamSettings(token: string): Promise<TeamSettings> { this.requireSession(token); return JSON.parse(localStorage.getItem('zabal-team-settings') || 'null') || { profile: 'football11', weight: true, fatigue: true, soreness: true, injuries: true, attendance: true, matches: true, cards: true }; }
+  async saveTeamSettings(token: string, settings: TeamSettings) { const auth = this.requireSession(token); if (auth.role !== 'staff') throw new DataServiceError('Acceso reservado al cuerpo técnico.', 'FORBIDDEN'); localStorage.setItem('zabal-team-settings', JSON.stringify(settings)); return settings; }
+  async emailAttendance(_token: string, _email: string, _pdfBase64: string, _periodLabel: string, _requestId: string): Promise<boolean> { throw new DataServiceError('El envío de correo requiere conexión al servicio del equipo.', 'CONFIG'); }
+
   private sessions = new Map<string, AuthSession>();
 
   private requireSession(token: string) {
@@ -165,6 +170,14 @@ export class LocalDataService implements DataService {
     return saved;
   }
 
+  async updateMatch(token: string, matchId: string, input: MatchInput): Promise<MatchRecord> {
+    const previous = readJson<MatchRecord[]>(MATCHES_KEY, []).find((match) => match.id === matchId);
+    if (!previous) throw new DataServiceError('Partido no encontrado.', 'NOT_FOUND');
+    const saved = await this.saveMatch(token, input);
+    const updated = { ...saved, id: matchId, createdAt: previous.createdAt };
+    const matches = readJson<MatchRecord[]>(MATCHES_KEY, []).filter((match) => match.id !== saved.id).map((match) => match.id === matchId ? updated : match);
+    localStorage.setItem(MATCHES_KEY, JSON.stringify(matches)); return updated;
+  }
   async getMatches(token: string): Promise<MatchRecord[]> {
     const auth = this.requireSession(token);
     if (auth.role !== 'staff') throw new DataServiceError('Solo el cuerpo técnico puede consultar los partidos.', 'FORBIDDEN');
@@ -195,6 +208,7 @@ export class LocalDataService implements DataService {
     if (!minutes.length) throw new DataServiceError('Introduce los minutos de al menos un jugador.', 'VALIDATION');
     const now = new Date().toISOString();
     const match: MatchRecord = {
+      referee: input.referee, goalsFor: input.goalsFor, goalsAgainst: input.goalsAgainst, incidents: input.incidents, captainId: input.captainId,
       id: crypto.randomUUID(), date: input.date, type: input.type, opponent,
       durationMinutes: input.durationMinutes, minutes, createdAt: now, updatedAt: now, createdBy: 'cuerpo-tecnico',
     };
