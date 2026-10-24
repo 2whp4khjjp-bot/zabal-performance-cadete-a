@@ -1,4 +1,4 @@
-import { ReportEmailPanel } from './ReportEmailPanel';
+import { ReportEmailDialog } from './ReportEmailDialog';
 import { createMatchDocument, createTotalsDocument } from '../services/teamDocuments';
 import { sortTotals, type TotalsSort } from '../utils/totalsSort';
 import { emptyMatchDetails, detailsFromMatch, MatchDetailsFields, MatchPdfButton } from './MatchDetailsFields';
@@ -153,7 +153,7 @@ export function MatchesPanel({ players, matches, saving, onSave, onUpdate }: Pro
             <div className="panel-card__heading"><div><p className="eyebrow eyebrow--dark">Registro</p><h2>Últimos partidos</h2></div><History /></div>
             {matches.length ? <div className="recent-match-list">{matches.map((match) => <article className="recent-match-row" key={match.id}><span className={`match-type-icon match-type-icon--${match.type}`}><Trophy size={18} /></span><div><strong>{match.opponent}</strong><small>{match.date} · {typeLabel(match.type)} · {match.durationMinutes} min</small></div><span><strong>{match.minutes.filter((item) => item.minutes > 0).length}</strong><small>jugadores</small></span><span className="recent-match-actions"><MatchPdfButton match={match} players={players} /><button type="button" className="button button--secondary" onClick={() => setEmailTarget(match)}>Enviar PDF</button><button type="button" className="button button--secondary" onClick={() => { setEditingId(match.id); setDetails(detailsFromMatch(match)); setDate(match.date); setType(match.type); setOpponent(match.opponent); setDurationOption(durationOptions.includes(match.durationMinutes as typeof durationOptions[number]) ? String(match.durationMinutes) : 'custom'); setCustomDuration(String(match.durationMinutes)); setMinutesByPlayer(Object.fromEntries(match.minutes.map((entry) => [entry.playerId, String(entry.minutes)]))); setMode('new'); }}><Pencil size={16} /> Editar</button></span></article>)}</div> : <div className="empty-state compact"><Trophy size={30} /><h2>Todavía no hay partidos</h2><button className="text-button" onClick={() => setMode('new')}>Registrar el primero</button></div>}
           </article>
-          {emailTarget && <ReportEmailPanel key={emailLabel} label={emailLabel} createPdf={makeEmailPdf} canSchedule={emailTarget === 'totals'} onClose={() => setEmailTarget(null)} />}
+          {emailTarget && <ReportEmailDialog key={emailLabel} label={emailLabel} createPdf={makeEmailPdf} canSchedule={emailTarget === 'totals'} onClose={() => setEmailTarget(null)} />}
         </div>
       </section>}
     </main>
