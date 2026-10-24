@@ -1,3 +1,6 @@
+import { ReportEmailPanel } from './ReportEmailPanel';
+import { createMatchDocument, createTotalsDocument } from '../services/teamDocuments';
+import { sortTotals, type TotalsSort } from '../utils/totalsSort';
 import { emptyMatchDetails, detailsFromMatch, MatchDetailsFields, MatchPdfButton } from './MatchDetailsFields';
 import { useMemo, useState } from 'react';
 import { CalendarDays, Pencil, Clock3, History, Save, Trophy, UsersRound } from 'lucide-react';
@@ -17,6 +20,8 @@ type Props = {
 const typeLabel = (type: MatchType) => type === 'official' ? 'Oficial' : 'Amistoso';
 
 export function MatchesPanel({ players, matches, saving, onSave, onUpdate }: Props) {
+  const [totalsSort, setTotalsSort] = useState<TotalsSort>({ key: 'number', descending: false });
+  const [emailTarget, setEmailTarget] = useState<MatchRecord | 'totals' | null>(null);
   const [mode, setMode] = useState<'new' | 'history'>('new');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [date, setDate] = useState(todayKey());
@@ -45,6 +50,18 @@ export function MatchesPanel({ players, matches, saving, onSave, onUpdate }: Pro
     }));
     return [...byPlayer.values()].filter((item) => item.appearances || item.minutes).sort((a, b) => b.minutes - a.minutes || a.player.order - b.player.order);
   }, [matches, players]);
+
+  const sortedTotals = useMemo(() => sortTotals(totals, totalsSort), [totals, totalsSort]);
+  const totalHeader = (label: string, key: string) => <th aria-sort={totalsSort.key === key ? (totalsSort.descending ? 'descending' : 'ascending') : 'none'}><button type="button" className="table-sort-button" onClick={() => setTotalsSort((current) => ({ key, descending: current.key === key ? !current.descending : key !== 'name' && key !== 'number' }))}>{label}{totalsSort.key === key ? (totalsSort.descending ? ' ↓' : ' ↑') : ''}</button></th>;
+
+  const makeEmailPdf = async () => {
+    if (emailTarget === 'totals') return createTotalsDocument(['Jugador', 'Partidos', 'Minutos'], sortedTotals.map((item) => [item.player.name, item.appearances, item.minutes]), 'Temporada');
+    if (!emailTarget) throw new Error('Selecciona un informe.');
+    const currentMatch = matches.find((match) => match.id === emailTarget.id);
+    if (!currentMatch) throw new Error('El partido ya no está disponible.');
+    return createMatchDocument(currentMatch, players);
+  };
+  const emailLabel = emailTarget === 'totals' ? 'Acumulado de partidos' : emailTarget ? `Partido contra ${emailTarget.opponent} · ${emailTarget.date}` : '';
 
   const validate = () => {
     const next: string[] = [];
@@ -129,12 +146,14 @@ export function MatchesPanel({ players, matches, saving, onSave, onUpdate }: Pro
         <div className="matches-history-grid">
           <article className="panel-card match-totals-card">
             <div className="panel-card__heading"><div><p className="eyebrow eyebrow--dark">Temporada</p><h2>Totales por jugador</h2></div><span className="count-badge count-badge--blue">{matches.length}</span></div>
-            {totals.length ? <div className="table-scroll"><table><thead><tr><th>Jugador</th><th>Partidos</th><th>Minutos</th></tr></thead><tbody>{totals.map((item) => <tr key={item.player.id}><td><strong>{item.player.name}</strong></td><td>{item.appearances}</td><td><strong>{item.minutes}</strong></td></tr>)}</tbody></table></div> : <div className="empty-state compact"><UsersRound size={30} /><h2>Sin minutos registrados</h2><p>Los totales aparecerán después de guardar el primer partido.</p></div>}
+            <button type="button" className="button button--secondary report-email-open" disabled={!matches.length} onClick={() => setEmailTarget('totals')}>Enviar acumulado en PDF</button>
+            {totals.length ? <div className="table-scroll"><table><thead><tr>{totalHeader('Jugador', 'name')}{totalHeader('Partidos', 'appearances')}{totalHeader('Minutos', 'minutes')}</tr></thead><tbody>{sortedTotals.map((item) => <tr key={item.player.id}><td><strong>{item.player.name}</strong></td><td>{item.appearances}</td><td><strong>{item.minutes}</strong></td></tr>)}</tbody></table></div> : <div className="empty-state compact"><UsersRound size={30} /><h2>Sin minutos registrados</h2><p>Los totales aparecerán después de guardar el primer partido.</p></div>}
           </article>
           <article className="panel-card recent-matches-card">
             <div className="panel-card__heading"><div><p className="eyebrow eyebrow--dark">Registro</p><h2>Últimos partidos</h2></div><History /></div>
-            {matches.length ? <div className="recent-match-list">{matches.map((match) => <article className="recent-match-row" key={match.id}><span className={`match-type-icon match-type-icon--${match.type}`}><Trophy size={18} /></span><div><strong>{match.opponent}</strong><small>{match.date} · {typeLabel(match.type)} · {match.durationMinutes} min</small></div><span><strong>{match.minutes.filter((item) => item.minutes > 0).length}</strong><small>jugadores</small></span><span className="recent-match-actions"><MatchPdfButton match={match} players={players} /><button type="button" className="button button--secondary" onClick={() => { setEditingId(match.id); setDetails(detailsFromMatch(match)); setDate(match.date); setType(match.type); setOpponent(match.opponent); setDurationOption(durationOptions.includes(match.durationMinutes as typeof durationOptions[number]) ? String(match.durationMinutes) : 'custom'); setCustomDuration(String(match.durationMinutes)); setMinutesByPlayer(Object.fromEntries(match.minutes.map((entry) => [entry.playerId, String(entry.minutes)]))); setMode('new'); }}><Pencil size={16} /> Editar</button></span></article>)}</div> : <div className="empty-state compact"><Trophy size={30} /><h2>Todavía no hay partidos</h2><button className="text-button" onClick={() => setMode('new')}>Registrar el primero</button></div>}
+            {matches.length ? <div className="recent-match-list">{matches.map((match) => <article className="recent-match-row" key={match.id}><span className={`match-type-icon match-type-icon--${match.type}`}><Trophy size={18} /></span><div><strong>{match.opponent}</strong><small>{match.date} · {typeLabel(match.type)} · {match.durationMinutes} min</small></div><span><strong>{match.minutes.filter((item) => item.minutes > 0).length}</strong><small>jugadores</small></span><span className="recent-match-actions"><MatchPdfButton match={match} players={players} /><button type="button" className="button button--secondary" onClick={() => setEmailTarget(match)}>Enviar PDF</button><button type="button" className="button button--secondary" onClick={() => { setEditingId(match.id); setDetails(detailsFromMatch(match)); setDate(match.date); setType(match.type); setOpponent(match.opponent); setDurationOption(durationOptions.includes(match.durationMinutes as typeof durationOptions[number]) ? String(match.durationMinutes) : 'custom'); setCustomDuration(String(match.durationMinutes)); setMinutesByPlayer(Object.fromEntries(match.minutes.map((entry) => [entry.playerId, String(entry.minutes)]))); setMode('new'); }}><Pencil size={16} /> Editar</button></span></article>)}</div> : <div className="empty-state compact"><Trophy size={30} /><h2>Todavía no hay partidos</h2><button className="text-button" onClick={() => setMode('new')}>Registrar el primero</button></div>}
           </article>
+          {emailTarget && <ReportEmailPanel key={emailLabel} label={emailLabel} createPdf={makeEmailPdf} canSchedule={emailTarget === 'totals'} onClose={() => setEmailTarget(null)} />}
         </div>
       </section>}
     </main>
